@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "Bookit GY",
+    "slug": "bookitgy",
+    "scheme": "bookitgy",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "web": {
+      "bundler": "metro",
+      "favicon": "./assets/favicon.png"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "We use your location to show nearby providers and set provider shop locations."
+      }
+    },
+    "android": { "adaptiveIcon": { "foregroundImage": "./assets/adaptive-icon.png", "backgroundColor": "#ffffff" } },
+    "plugins": ["expo-router"],
+    "extra": { "eas": { "projectId": "replace-with-eas-id" } }
+  }
+}
