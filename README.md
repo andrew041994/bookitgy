@@ -1,4 +1,4 @@
-# Bookit GY (Booksy‑inspired)
+# Bookit GY
 
 Monorepo with:
 - **API**: Node.js + Express + Prisma + Postgres + Redis + WhatsApp Cloud API
