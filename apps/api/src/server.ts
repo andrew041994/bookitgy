@@ -5,6 +5,7 @@ import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import { DateTime } from 'luxon';
+import crypto from 'crypto';
 
 import { registerCronJobs } from './workers/cron.js';
 import { waSend } from './services/whatsapp.js';
@@ -38,44 +39,142 @@ function auth(required: ('ADMIN'|'PROVIDER'|'CLIENT')[] = []) {
 
 // --- auth/register updated to accept latitude/longitude (current only)
 app.post('/auth/register', async (req, res) => {
-  const { role, fullName, phone, email, password, businessName, category,
-          latitude, longitude } = req.body;
-  const hash = await bcrypt.hash(password, 10);
-  const user = await prisma.user.create({
-    data: { role, fullName, phone, email, passwordHash: hash }
-  });
-  if (role === 'PROVIDER') {
-    await prisma.provider.create({
+  try {
+    const { role, fullName, email, phone, password, businessName, category, latitude, longitude,} = req.body;
+
+     if (!role || !fullName || !email || !phone || !password) {
+       return res.status(400).json({ error: "Missing required fields" });
+       }
+
+
+    const hash = await bcrypt.hash(password, 10);
+
+    const user = await prisma.user.create({
       data: {
-        userId: user.id,
-        businessName,
-        category,
-        workingHoursJson: { mon:[["09:00","17:00"]], tue:[["09:00","17:00"]], wed:[["09:00","17:00"]], thu:[["09:00","17:00"]], fri:[["09:00","17:00"]], sat:[], sun:[] },
-        latitude:  latitude  != null ? Number(latitude)  : null,
-        longitude: longitude != null ? Number(longitude) : null
-      }
+        role,
+        fullName,
+        email: email.toLowerCase(),
+        phone: phone || null,
+        passwordHash: hash,
+      },
     });
-  } else if (role === 'CLIENT') {
-    await prisma.client.create({ data: { userId: user.id } });
+
+    if (role === 'PROVIDER') {
+      await prisma.provider.create({
+        data: {
+          userId: user.id,
+          businessName: businessName || fullName,
+          category: category || 'Barber',
+          workingHoursJson: DEFAULT_HOURS,
+          latitude: latitude != null ? Number(latitude) : null,
+          longitude: longitude != null ? Number(longitude) : null,
+        },
+      });
+    } else if (role === 'CLIENT') {
+      await prisma.client.create({ data: { userId: user.id } });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+      expiresIn: '7d',
+    });
+
+    res.json({ token, role: user.role });
+  } catch (e: any) {
+  // Prisma unique constraint errors
+  if (e.code === "P2002") {
+    if (e.meta?.target?.includes("email")) {
+      return res.status(400).json({ error: "Email already registered" });
+    }
+    if (e.meta?.target?.includes("phone")) {
+      return res.status(400).json({ error: "Phone already registered" });
+    }
   }
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, role: user.role });
-});
+
+  console.error("Register error:", e);
+  return res.status(500).json({ error: "Registration failed" });
+}
+
+
 
 app.post('/auth/login', async (req, res) => {
-  const { phone, password } = req.body;
-  const user = await prisma.user.findUnique({ where: { phone } });
-  if (!user) return res.status(400).json({ error: 'Invalid credentials' });
-  const ok = await bcrypt.compare(password, user.passwordHash);
-  if (!ok) return res.status(400).json({ error: 'Invalid credentials' });
-  const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: '7d' });
-  res.json({ token, role: user.role });
+  try {
+    const { email, phone, password } = req.body;
+
+    if (!password || (!email && !phone)) {
+      return res.status(400).json({ error: 'Email or phone and password required' });
+    }
+
+    let user = null;
+
+    if (email) {
+      user = await prisma.user.findUnique({
+        where: { email: email.toLowerCase() },
+      });
+    }
+
+    if (!user && phone) {
+      user = await prisma.user.findFirst({
+        where: { phone },
+      });
+    }
+
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const ok = await bcrypt.compare(password, user.passwordHash);
+    if (!ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, {
+      expiresIn: '7d',
+    });
+
+    res.json({ token, role: user.role });
+  } catch (e) {
+    console.error('Login error:', e);
+    res.status(500).json({ error: 'Login failed' });
+  }
 });
 
+
 // --- me
-app.get('/me', auth(['ADMIN','PROVIDER','CLIENT']), async (req:any,res)=>{
-  const user = await prisma.user.findUnique({ where: { id: req.user.id }, include: { provider: true, client: true } });
-  res.json({ id: user?.id, role: user?.role, phone: user?.phone, fullName: user?.fullName, providerId: user?.provider?.id, clientId: user?.client?.id });
+// GET current user profile
+app.get('/me', authMiddleware, async (req: any, res) => {
+  const user = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: {
+      id: true,
+      fullName: true,
+      email: true,
+      phone: true,
+      role: true,
+    },
+  });
+  res.json(user);
+});
+
+// PATCH profile – allow phone/fullName, but NOT email
+app.patch("/me", authMiddleware, async (req: any, res) => {
+  const { fullName, phone } = req.body;
+
+  try {
+    const user = await prisma.user.update({
+      where: { id: req.user.id },
+      data: {
+        ...(fullName && { fullName }),
+        ...(phone && { phone }), // MUST be unique; Prisma will error if taken
+      },
+    });
+
+    res.json(user);
+  } catch (e: any) {
+    if (e.code === "P2002" && e.meta?.target?.includes("phone")) {
+      return res.status(400).json({ error: "Phone already registered" });
+    }
+    throw e;
+  }
 });
 
 // --- provider search with optional distance using PUBLISHED coords ONLY
@@ -271,3 +370,116 @@ app.listen(port, () => {
   console.log(`API listening on :${port}`);
   registerCronJobs(prisma);
 });
+
+
+
+
+// Request reset
+app.post('/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.status(400).json({ error: 'Email required' });
+
+  const user = await prisma.user.findUnique({
+    where: { email: email.toLowerCase() },
+  });
+
+  // For security, always respond 200, even if user not found
+  if (!user) {
+    return res.json({ ok: true });
+  }
+
+  const token = crypto.randomBytes(32).toString('hex');
+  const expires = new Date(Date.now() + 1000 * 60 * 60); // 1 hour
+
+  await prisma.passwordResetToken.create({
+    data: {
+      userId: user.id,
+      token,
+      expiresAt: expires,
+    },
+  });
+
+  // TODO: send email here using your email provider
+  console.log('Password reset token for', email, token);
+
+  res.json({ ok: true });
+});
+
+// Reset password
+app.post('/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  if (!token || !newPassword) {
+    return res.status(400).json({ error: 'Token and newPassword required' });
+  }
+
+  const record = await prisma.passwordResetToken.findUnique({
+    where: { token },
+  });
+
+  if (!record || record.expiresAt < new Date()) {
+    return res.status(400).json({ error: 'Invalid or expired token' });
+  }
+
+  const hash = await bcrypt.hash(newPassword, 10);
+
+  await prisma.user.update({
+    where: { id: record.userId },
+    data: { passwordHash: hash },
+  });
+
+  await prisma.passwordResetToken.delete({ where: { id: record.id } });
+
+  res.json({ ok: true });
+});})
+
+// List providers (used by home screen and radius search)
+app.get('/providers', async (req, res) => {
+  try {
+    const q = (req.query.q as string | undefined)?.trim() || "";
+
+    const providers = await prisma.provider.findMany({
+      where: q
+        ? {
+            OR: [
+              { businessName: { contains: q, mode: "insensitive" } },
+              { category: { contains: q, mode: "insensitive" } },
+              {
+                user: {
+                  fullName: { contains: q, mode: "insensitive" },
+                },
+              },
+            ],
+          }
+        : {},
+      include: {
+        user: true,
+      },
+    });
+
+    const result = providers.map((p) => ({
+      id: p.id,
+      userId: p.userId,
+      businessName: p.businessName,
+      fullName: p.user.fullName,
+      category: p.category,
+      latitude: p.latitude,
+      longitude: p.longitude,
+      // placeholders for now – can be wired to real stats later
+      rating: 0,
+      totalAppointments: 0,
+    }));
+
+    res.json(result);
+  } catch (e) {
+    console.error("GET /providers error:", e);
+    res.status(500).json({ error: "Failed to load providers" });
+  }
+});
+
+
+const PORT = process.env.PORT || 4000;
+
+app.listen(PORT, () => {
+  console.log(`API listening on :${PORT}`);
+});
+

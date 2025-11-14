@@ -1,1 +1,14 @@
 .expo/
+node_modules/
+.expo/
+.expo-shared/
+.env
+.env.*
+dist/
+build/
+.next/
+.DS_Store
+package-lock.json
+yarn.lock
+infra/postgres-data/
+infra/redis-data/

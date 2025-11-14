@@ -14,7 +14,11 @@ export default function ProviderScreen() {
     const { data } = await axios.get(`${API}/providers/${id}`);
     setProvider(data);
   }
-  useEffect(()=>{ load(); }, [id]);
+
+  useEffect(() => {
+  if (!id) return;   // Prevent effect from running before id is ready
+  load();
+}, [id]);
 
   if (!provider) return <Text>Loading...</Text>;
 

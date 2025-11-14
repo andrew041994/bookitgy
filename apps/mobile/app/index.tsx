@@ -5,6 +5,8 @@ import axios from 'axios';
 import { loadAuth } from '../src/auth';
 import { theme } from '../src/theme';
 import * as Location from 'expo-location';
+import { Button } from 'react-native';
+import { router } from 'expo-router';
 
 const API = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000';
 
@@ -19,12 +21,32 @@ export default function Home() {
     const { data } = await axios.get(`${API}/providers`, { params: { q }});
     setList(data);
   }
-  useEffect(()=>{ load(); (async()=>{ const { role } = await loadAuth(); setRole(role); })(); }, []);
+useEffect(() => {
+  async function init() {
+    try {
+      await load(); // loads providers list
+
+      const { role } = await loadAuth();
+      setRole(role || "");
+    } catch (e) {
+      console.log("Init error:", e);
+      setRole("");
+    }
+  }
+
+  init();
+}, []);
+
 
   return (
     <View style={{ padding: 16, gap: 12 }}>
       <Text style={{ fontSize: 24, fontWeight: '700' }}>Bookit GY</Text>
       <Text style={{ color: theme.subtext }}>{role ? `Signed in as ${role}` : 'You are not signed in'}</Text>
+
+      <Button 
+        title="Profile" 
+        onPress={() => router.push("/profile")}
+      />
 
       {!role && (
         <View style={{ flexDirection:'row', gap: 8 }}>

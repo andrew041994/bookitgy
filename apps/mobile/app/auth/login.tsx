@@ -1,32 +1,68 @@
-import { useState } from 'react';
-import { View, Text, TextInput, TouchableOpacity, Alert } from 'react-native';
-import axios from 'axios';
-import { saveAuth } from '../../src/auth';
+import React, { useState } from "react";
+import { View, TextInput, Button, Text, Alert } from "react-native";
+import axios from "axios";
+import { router } from "expo-router";
+import { saveAuth } from "../../src/auth";
 
-const API = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:4000';
+const API = process.env.EXPO_PUBLIC_API_URL || "http://localhost:4000";
 
 export default function Login() {
-  const [phone, setPhone] = useState('');
-  const [password, setPassword] = useState('');
+  const [identifier, setIdentifier] = useState(""); // email or phone
+  const [password, setPassword] = useState("");
+  const [loading, setLoading] = useState(false);
 
   async function onLogin() {
+    if (!identifier || !password) {
+      Alert.alert("Missing info", "Please enter email/phone and password.");
+      return;
+    }
+
     try {
-      const { data } = await axios.post(`${API}/auth/login`, { phone, password });
+      setLoading(true);
+      const { data } = await axios.post(`${API}/auth/login`, {
+        identifier,
+        password,
+      });
+
       await saveAuth(data.token, data.role);
-      Alert.alert('Login success', `Role: ${data.role}`);
-    } catch (e:any) {
-      Alert.alert('Login failed', e?.response?.data?.error || 'Error');
+
+      if (data.role === "PROVIDER") {
+        router.replace("/provider/dashboard");
+      } else {
+        router.replace("/");
+      }
+    } catch (e: any) {
+      console.error("Login failed", e?.response?.data || e.message);
+      Alert.alert("Login failed", e?.response?.data?.error || "Invalid credentials");
+    } finally {
+      setLoading(false);
     }
   }
 
   return (
-    <View style={{ padding: 16, gap: 12 }}>
-      <Text style={{ fontSize: 24, fontWeight: '700' }}>Login</Text>
-      <TextInput placeholder="Phone (+592… or local)" value={phone} onChangeText={setPhone} style={{ borderWidth:1, borderRadius:8, padding:10 }}/>
-      <TextInput placeholder="Password" value={password} onChangeText={setPassword} secureTextEntry style={{ borderWidth:1, borderRadius:8, padding:10 }}/>
-      <TouchableOpacity onPress={onLogin} style={{ backgroundColor:'#111', padding:12, borderRadius:8 }}>
-        <Text style={{ color:'#fff', textAlign:'center' }}>Login</Text>
-      </TouchableOpacity>
+    <View style={{ padding: 20, gap: 12 }}>
+      <Text style={{ fontSize: 22, fontWeight: "700", marginBottom: 8 }}>
+        Login
+      </Text>
+
+      <TextInput
+        placeholder="Email or Phone"
+        autoCapitalize="none"
+        keyboardType="email-address"
+        value={identifier}
+        onChangeText={setIdentifier}
+        style={{ borderWidth: 1, borderRadius: 8, padding: 10 }}
+      />
+
+      <TextInput
+        placeholder="Password"
+        secureTextEntry
+        value={password}
+        onChangeText={setPassword}
+        style={{ borderWidth: 1, borderRadius: 8, padding: 10 }}
+      />
+
+      <Button title={loading ? "Logging in..." : "Login"} onPress={onLogin} />
     </View>
   );
 }
